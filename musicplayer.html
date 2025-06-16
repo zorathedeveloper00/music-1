@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Universal Music Player with Platform Support</title>
+  <style>
+    body {
+      background: #121212;
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      margin: 0;
+      padding: 2rem;
+    }
+    #app {
+      background: #1e1e1e;
+      border-radius: 12px;
+      padding: 20px;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 0 15px rgba(29, 185, 84, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    h1 {
+      text-align: center;
+      color: #1db954;
+      margin: 0 0 10px;
+    }
+    #current-song {
+      font-style: italic;
+      text-align: center;
+      font-size: 1.1rem;
+      min-height: 1.4rem;
+      user-select: none;
+    }
+    #player-container {
+      position: relative;
+      width: 100%;
+      height: 60px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #121212;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    audio {
+      width: 100%;
+      outline: none;
+      border-radius: 8px;
+    }
+    iframe {
+      width: 100%;
+      height: 60px;
+      border: none;
+      border-radius: 8px;
+    }
+    #controls {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-bottom: 10px;
+    }
+    button {
+      background-color: #1db954;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 1rem;
+      color: white;
+      transition: background-color 0.3s ease;
+      user-select: none;
+    }
+    button:hover {
+      background-color: #17a44c;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    input[type="text"] {
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      font-size: 1rem;
+      outline: none;
+    }
+    #playlist {
+      list-style: none;
+      padding: 0;
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #333;
+      border-radius: 8px;
+      background: #282828;
+    }
+    #playlist li {
+      padding: 10px;
+      cursor: pointer;
+      border-bottom: 1px solid #333;
+      user-select: none;
+    }
+    #playlist li:last-child {
+      border-bottom: none;
+    }
+    #playlist li:hover,
+    #playlist li.active {
+      background: #1db954;
+      color: #121212;
+    }
+    /* Scrollbar styling */
+    #playlist::-webkit-scrollbar {
+      width: 8px;
+    }
+    #playlist::-webkit-scrollbar-track {
+      background: #1e1e1e;
+    }
+    #playlist::-webkit-scrollbar-thumb {
+      background-color: #1db954;
+      border-radius: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>🎧 Universal Music Player</h1>
+    <div id="current-song">No song playing</div>
+    <div id="player-container">
+      <!-- Player (audio or iframe) will be inserted here -->
+    </div>
+    <div id="controls">
+      <button id="prev">⏮ Prev</button>
+      <button id="play">▶️ Play/Pause</button>
+      <button id="next">⏭ Next</button>
+    </div>
+
+    <form id="add-form">
+      <input type="text" id="song-name" placeholder="Song name (optional)" autocomplete="off" />
+      <input type="text" id="song-url" placeholder="Song URL (any platform or direct mp3)" autocomplete="off" required />
+      <button type="submit">Add Song to Playlist</button>
+    </form>
+
+    <ul id="playlist"></ul>
+  </div>
+
+  <script>
+    const playerContainer = document.getElementById('player-container');
+    const currentSongEl = document.getElementById('current-song');
+    const playlistEl = document.getElementById('playlist');
+    const addForm = document.getElementById('add-form');
+    const songNameInput = document.getElementById('song-name');
+    const songUrlInput = document.getElementById('song-url');
+    const playBtn = document.getElementById('play');
+    const nextBtn = document.getElementById('next');
+    const prevBtn = document.getElementById('prev');
+
+    let playlist = JSON.parse(localStorage.getItem('playlist')) || [];
+    let currentIndex = 0;
+    let isPlaying = false;
+
+    // Helper: detect platform from URL
+    function detectPlatform(url) {
+      if (!url) return null;
+      if (/youtube\.com\/watch\?v=|youtu\.be\//i.test(url)) return 'youtube';
+      if (/soundcloud\.com\//i.test(url)) return 'soundcloud';
+      if (/open\.spotify\.com\/track\//i.test(url)) return 'spotify';
+      // Add more platforms if needed
+      if (url.match(/\.(mp3|ogg|wav|m4a|aac|flac)$/i)) return 'audiofile';
+      return 'unknown';
+    }
+
+    // Extract video ID from YouTube URL
+    function getYouTubeID(url) {
+      const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^\&\?\/]+)/;
+      const match = url.match(regex);
+      return match ? match[1] : null;
+    }
+
+    // Extract Spotify track ID
+    function getSpotifyID(url) {
+      const regex = /open\.spotify\.com\/track\/([a-zA-Z0-9]+)/;
+      const match = url.match(regex);
+      return match ? match[1] : null;
+    }
+
+    // Clear current player element
+    function clearPlayer() {
+      playerContainer.innerHTML = '';
+    }
+
+    // Create and return audio element
+    function createAudioElement(src) {
+      const audio = document.createElement('audio');
+      audio.src = src;
+      audio.controls = false;
+      audio.autoplay = true;
+      audio.style.width = '100%';
+      audio.onended = nextSong;
+      audio.onplay = () => {
+        isPlaying = true;
+        playBtn.textContent = '⏸ Pause';
+      };
+      audio.onpause = () => {
+        isPlaying = false;
+        playBtn.textContent = '▶️ Play';
+      };
+      return audio;
+    }
+
+    // Create YouTube embed iframe
+    function createYouTubeIframe(videoId) {
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&modestbranding=1&rel=0`;
+      iframe.allow = 'autoplay; encrypted-media';
+      iframe.allowFullscreen = true;
+      return iframe;
+    }
+
+    // Create SoundCloud embed iframe
+    function createSoundCloudIframe(url) {
+      const iframe = document.createElement('iframe');
+      const src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=true&hide_related=false&show_comments=true&show_user=true&show_reposts=false&visual=false`;
+      iframe.src = src;
+      iframe.allow = 'autoplay';
+      return iframe;
+    }
+
+    // Create Spotify embed iframe
+    function createSpotifyIframe(trackId) {
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://open.spotify.com/embed/track/${trackId}`;
+      iframe.allow = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+      iframe.allowFullscreen = true;
+      return iframe;
+    }
+
+    // Play current song, embedding player or using audio
+    function playSong() {
+      if (!playlist.length) {
+        currentSongEl.textContent = 'No song in playlist';
+        clearPlayer();
+        return;
+      }
+      const song = playlist[currentIndex];
+      currentSongEl.textContent = `Now Playing: ${song.name || 'Unnamed Song'}`;
+
+      clearPlayer();
+
+      const platform = detectPlatform(song.url);
+
+      if (platform === 'youtube') {
+        const videoId = getYouTubeID(song.url);
+        if (videoId) {
+          playerContainer.appendChild(createYouTubeIframe(videoId));
+        } else {
+          currentSongEl.textContent = 'Invalid YouTube URL';
+        }
+        playBtn.textContent = '⏸ Pause';
+        isPlaying = true;
+      } else if (platform === 'soundcloud') {
+        playerContainer.appendChild(createSoundCloudIframe(song.url));
+        playBtn.textContent = '⏸ Pause';
+        isPlaying = true;
+      } else if (platform === 'spotify') {
+        const trackId = getSpotifyID(song.url);
+        if (trackId) {
+          playerContainer.appendChild(createSpotifyIframe(trackId));
+        } else {
+          currentSongEl.textContent = 'Invalid Spotify URL';
+        }
+        playBtn.textContent = '⏸ Pause';
+        isPlaying = true;
+      } else if (platform === 'audiofile') {
+        const audio = createAudioElement(song.url);
+        playerContainer.appendChild(audio);
+        audio.play();
+      } else {
+        currentSongEl.textContent = 'Unsupported or invalid URL format';
+      }
+      renderPlaylist();
+      savePlaylist();
+    }
+
+    // Play or pause toggle for audio files only
+    function togglePlay() {
+      const audio = playerContainer.querySelector('audio');
+      if (!audio) {
+        // For embedded players, no toggle possible via JS (due to cross-origin)
+        alert('Play/Pause control is only supported for direct audio files.');
+        return;
+      }
+      if (audio.paused) {
+        audio.play();
+      } else {
+        audio.pause();
+      }
+    }
+
+    function nextSong() {
+      if (!playlist.length) return;
+      currentIndex = (currentIndex + 1) % playlist.length;
+      playSong();
+    }
+
+    function prevSong() {
+      if (!playlist.length) return;
+      currentIndex = (currentIndex - 1 + playlist.length) % playlist.length;
+      playSong();
+    }
+
+    function renderPlaylist() {
+      playlistEl.innerHTML = '';
+      playlist.forEach((song, i) => {
+        const li = document.createElement('li');
+        li.textContent = song.name || `Song ${i + 1}`;
+        li.classList.toggle('active', i === currentIndex);
+        li.title = song.url;
+        li.onclick = () => {
+          currentIndex = i;
+          playSong();
+        };
+        playlistEl.appendChild(li);
+      });
+    }
+
+    function savePlaylist() {
+      localStorage.setItem('playlist', JSON.stringify(playlist));
+    }
+
+    addForm.onsubmit = e => {
+      e.preventDefault();
+      const name = songNameInput.value.trim();
+      const url = songUrlInput.value.trim();
+      if (!url) {
+        alert('Please enter a valid URL');
+        return;
+      }
+      playlist.push({ name, url });
+      currentIndex = playlist.length - 1;
+      songNameInput.value = '';
+      songUrlInput.value = '';
+      playSong();
+    };
+
+    playBtn.onclick = togglePlay;
+    nextBtn.onclick = nextSong;
+    prevBtn.onclick = prevSong;
+
+    // On page load
+    if (playlist.length > 0) {
+      playSong();
+    } else {
+      currentSongEl.textContent = 'Add a song to start playing';
+    }
+    renderPlaylist();
+  </script>
+</body>
+</html>
